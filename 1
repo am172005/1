@@ -1,0 +1,53 @@
+import torch
+import torch.nn as nn
+import torch.optim as optim
+
+# Sample Corpus
+text = "deep learning uses neural networks deep learning is powerful"
+
+# Tokenize
+words = text.lower().split()
+
+
+vocab = {word: i for i, word in enumerate(sorted(set(words)))}
+vocab_size = len(vocab)
+
+# Create Skip-gram training pairs
+pairs = []
+for i in range(len(words)-1):
+    pairs.append((vocab[words[i]], vocab[words[i+1]]))
+
+# Word2Vec Model
+class Word2Vec(nn.Module):
+    def __init__(self):
+        super().__init__()
+        self.embed = nn.Embedding(vocab_size, 10)
+        self.fc = nn.Linear(10, vocab_size)
+    def forward(self, x):
+        x = self.embed(x)
+        return self.fc(x)
+
+model = Word2Vec()
+loss_fn = nn.CrossEntropyLoss()
+optimizer = optim.Adam(model.parameters(), lr=0.01)
+
+# Training
+for epoch in range(20):
+    total_loss = 0
+    for center, context in pairs:
+        center = torch.tensor([center])
+        context = torch.tensor([context])
+        output = model(center)
+        loss = loss_fn(output, context)
+        optimizer.zero_grad()
+        loss.backward()
+        optimizer.step()
+        total_loss += loss.item()
+    if (epoch+1) % 5 == 0:
+        print("Epoch", epoch+1, "Loss =", round(total_loss, 4))
+
+# Display Embeddings
+print("\nEmbedding of 'learning'")
+print(model.embed.weight[vocab["learning"]])
+print("\nEmbedding of 'neural'")
+print(model.embed.weight[vocab["neural"]])
