@@ -1,53 +1,150 @@
-import torch
-import torch.nn as nn
-import torch.optim as optim
+import pandas as pd
+import math
 
-# Sample Corpus
-text = "deep learning uses neural networks deep learning is powerful"
+# -----------------------
+# Read Dataset
+# -----------------------
 
-# Tokenize
-words = text.lower().split()
+parent_df = pd.read_csv("parent.csv")
+male_df = pd.read_csv("male.csv")
 
+# Store parent-child relation
+parent = set(zip(parent_df["Parent"], parent_df["Child"]))
 
-vocab = {word: i for i, word in enumerate(sorted(set(words)))}
-vocab_size = len(vocab)
+# Store male persons
+male = set(male_df[male_df["IsMale"] == "Yes"]["Person"])
 
-# Create Skip-gram training pairs
-pairs = []
-for i in range(len(words)-1):
-    pairs.append((vocab[words[i]], vocab[words[i+1]]))
+# List of all people
+people = list(set(parent_df["Parent"]) | set(parent_df["Child"]))
 
-# Word2Vec Model
-class Word2Vec(nn.Module):
-    def __init__(self):
-        super().__init__()
-        self.embed = nn.Embedding(vocab_size, 10)
-        self.fc = nn.Linear(10, vocab_size)
-    def forward(self, x):
-        x = self.embed(x)
-        return self.fc(x)
+# -----------------------
+# Generate Positive Examples
+# -----------------------
 
-model = Word2Vec()
-loss_fn = nn.CrossEntropyLoss()
-optimizer = optim.Adam(model.parameters(), lr=0.01)
+positive = []
 
-# Training
-for epoch in range(20):
-    total_loss = 0
-    for center, context in pairs:
-        center = torch.tensor([center])
-        context = torch.tensor([context])
-        output = model(center)
-        loss = loss_fn(output, context)
-        optimizer.zero_grad()
-        loss.backward()
-        optimizer.step()
-        total_loss += loss.item()
-    if (epoch+1) % 5 == 0:
-        print("Epoch", epoch+1, "Loss =", round(total_loss, 4))
+for x in people:
+    for y in people:
+        if (x, y) in parent:
+            for z in people:
+                if (y, z) in parent and x in male:
+                    positive.append((x, z))
 
-# Display Embeddings
-print("\nEmbedding of 'learning'")
-print(model.embed.weight[vocab["learning"]])
-print("\nEmbedding of 'neural'")
-print(model.embed.weight[vocab["neural"]])
+positive = list(set(positive))
+
+# -----------------------
+# Generate Negative Examples
+# -----------------------
+
+negative = []
+
+for x in people:
+    for z in people:
+        if (x, z) not in positive:
+            negative.append((x, z))
+
+# -----------------------
+# Covers Function
+# -----------------------
+
+def covers(rule, x, z):
+
+    if "male(X)" in rule and x not in male:
+        return False
+
+    if "parent(X,Y)" in rule and "parent(Y,Z)" in rule:
+
+        for y in people:
+            if (x, y) in parent and (y, z) in parent:
+                return True
+
+        return False
+
+    return True
+
+# -----------------------
+# FOIL Gain Function
+# -----------------------
+
+def foil_gain(p0, n0, p1, n1):
+
+    if p1 == 0:
+        return -1
+
+    return p1 * (
+        math.log2(p1 / (p1 + n1))
+        - math.log2(p0 / (p0 + n0))
+    )
+
+# -----------------------
+# Candidate Literals
+# -----------------------
+
+candidate_literals = [
+    "male(X)",
+    "parent(X,Y)",
+    "parent(Y,Z)"
+]
+
+rule = []
+
+remaining_pos = positive.copy()
+remaining_neg = negative.copy()
+
+# -----------------------
+# Display Examples
+# -----------------------
+
+print("Positive Examples")
+print(positive)
+
+print("\nNegative Examples")
+print(negative)
+
+print("\nBuilding Rule\n")
+
+# -----------------------
+# Build FOIL Rule
+# -----------------------
+
+while remaining_neg and candidate_literals:
+
+    best_gain = -1
+    best_literal = ""
+
+    p0 = len(remaining_pos)
+    n0 = len(remaining_neg)
+
+    for lit in candidate_literals:
+
+        trial = rule + [lit]
+
+        p1 = sum(1 for x, z in remaining_pos if covers(trial, x, z))
+        n1 = sum(1 for x, z in remaining_neg if covers(trial, x, z))
+
+        gain = foil_gain(p0, n0, p1, n1)
+
+        print(lit, "Gain =", round(gain, 3))
+
+        if gain > best_gain:
+            best_gain = gain
+            best_literal = lit
+
+    rule.append(best_literal)
+    candidate_literals.remove(best_literal)
+
+    remaining_pos = [i for i in remaining_pos if covers(rule, *i)]
+    remaining_neg = [i for i in remaining_neg if covers(rule, *i)]
+
+    print("\nAdded Literal :", best_literal)
+    print()
+
+# -----------------------
+# Final Output
+# -----------------------
+
+print("================================")
+
+print("\nFinal FOIL Rule\n")
+
+print("grandfather(X,Z) :-", ", ".join(rule))
